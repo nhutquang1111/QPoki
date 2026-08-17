@@ -9,7 +9,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,wav}']
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,wav,ogg,oga,mp3}']
       },
       manifest: {
         name: 'TinyExplorers - Khu vườn khám phá',

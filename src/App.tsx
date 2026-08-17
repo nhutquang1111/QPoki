@@ -45,6 +45,8 @@ function useStoredState<T>(key: string, initial: T) {
 function useAudio(settings: Settings) {
   const audioContext = useRef<AudioContext | null>(null)
   const voiceAudio = useRef<HTMLAudioElement | null>(null)
+  const animalAudio = useRef<HTMLAudioElement | null>(null)
+  const finishAnimal = useRef<((completed: boolean) => void) | null>(null)
 
   const ensureContext = useCallback(() => {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext
@@ -70,18 +72,22 @@ function useAudio(settings: Settings) {
     oscillator.stop(start + duration + 0.02)
   }, [ensureContext, settings.effects, settings.masterVolume])
 
-  const sfx = useCallback((kind: 'pop' | 'success' | 'ting') => {
-    if (kind === 'pop') tone(480, 0.09, 0, 0.05)
+  const sfx = useCallback((kind: 'pop' | 'success' | 'ting'): number => {
+    if (!settings.effects) return 0
+    if (kind === 'pop') {
+      tone(480, 0.09, 0, 0.05)
+      return 110
+    }
     if (kind === 'ting') {
       tone(740, 0.15, 0, 0.07)
       tone(980, 0.18, 0.1, 0.06)
+      return 300
     }
-    if (kind === 'success') {
-      tone(523, 0.18, 0, 0.07)
-      tone(659, 0.18, 0.13, 0.07)
-      tone(784, 0.26, 0.26, 0.08)
-    }
-  }, [tone])
+    tone(523, 0.18, 0, 0.07)
+    tone(659, 0.18, 0.13, 0.07)
+    tone(784, 0.26, 0.26, 0.08)
+    return 540
+  }, [settings.effects, tone])
 
   const musicNote = useCallback((frequency: number) => {
     if (!settings.music) return
@@ -100,20 +106,89 @@ function useAudio(settings: Settings) {
     oscillator.stop(now + 1.4)
   }, [ensureContext, settings.masterVolume, settings.music])
 
+  const stopVoice = useCallback(() => {
+    const recording = voiceAudio.current
+    if (!recording) return
+    recording.pause()
+    recording.currentTime = 0
+    voiceAudio.current = null
+  }, [])
+
+  const stopAnimal = useCallback(() => {
+    const recording = animalAudio.current
+    animalAudio.current = null
+    const finish = finishAnimal.current
+    finishAnimal.current = null
+    recording?.pause()
+    if (recording) recording.currentTime = 0
+    finish?.(false)
+  }, [])
+
   const speak = useCallback((text: string) => {
+    stopVoice()
+    stopAnimal()
     if (!settings.voice) return
-    voiceAudio.current?.pause()
     const recording = new Audio(`/audio/${voiceKey(text)}.wav`)
     recording.volume = settings.masterVolume
     voiceAudio.current = recording
     void recording.play().catch(() => undefined)
-  }, [settings.masterVolume, settings.voice])
+  }, [settings.masterVolume, settings.voice, stopAnimal, stopVoice])
+
+  const playAnimal = useCallback((source: string, volumeBoost = 1): Promise<boolean> => {
+    stopVoice()
+    stopAnimal()
+    const recording = new Audio(source)
+    recording.volume = settings.masterVolume
+    animalAudio.current = recording
+    let mediaSource: MediaElementAudioSourceNode | null = null
+    let volumeGain: GainNode | null = null
+
+    if (volumeBoost > 1) {
+      const context = ensureContext()
+      if (context) {
+        mediaSource = context.createMediaElementSource(recording)
+        volumeGain = context.createGain()
+        volumeGain.gain.setValueAtTime(volumeBoost, context.currentTime)
+        mediaSource.connect(volumeGain).connect(context.destination)
+      } else {
+        recording.volume = Math.min(1, settings.masterVolume * volumeBoost)
+      }
+    }
+
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (completed: boolean) => {
+        if (settled) return
+        settled = true
+        recording.onended = null
+        recording.onerror = null
+        mediaSource?.disconnect()
+        volumeGain?.disconnect()
+        if (animalAudio.current === recording) animalAudio.current = null
+        if (finishAnimal.current === finish) finishAnimal.current = null
+        resolve(completed)
+      }
+      finishAnimal.current = finish
+      recording.onended = () => finish(true)
+      recording.onerror = () => finish(false)
+      void recording.play().catch(() => finish(false))
+    })
+  }, [ensureContext, settings.masterVolume, stopAnimal, stopVoice])
 
   const stop = useCallback(() => {
-    voiceAudio.current?.pause()
-  }, [])
+    stopVoice()
+    stopAnimal()
+  }, [stopAnimal, stopVoice])
 
-  return { ensureContext, musicNote, sfx, speak, stop }
+  const correct = useCallback(() => {
+    stop()
+    return sfx('ting')
+  }, [sfx, stop])
+
+  return useMemo(
+    () => ({ ensureContext, musicNote, sfx, speak, playAnimal, stop, correct }),
+    [correct, ensureContext, musicNote, playAnimal, sfx, speak, stop],
+  )
 }
 
 function voiceKey(text: string) {
@@ -297,10 +372,10 @@ function Feedback({ success, icon = '⭐' }: { success: boolean; icon?: string }
 }
 
 const animalRounds = [
-  { name: 'chó', sound: 'Gâu gâu!', icon: '🐶' }, { name: 'mèo', sound: 'Meo meo!', icon: '🐱' },
-  { name: 'vịt', sound: 'Cạp cạp!', icon: '🦆' }, { name: 'bò', sound: 'Ò ò!', icon: '🐮' },
-  { name: 'voi', sound: 'Tu tu!', icon: '🐘' }, { name: 'gà', sound: 'Ò ó o!', icon: '🐔' },
-  { name: 'cừu', sound: 'Be be!', icon: '🐑' }, { name: 'ếch', sound: 'Ộp ộp!', icon: '🐸' },
+  { name: 'chó', audio: '/audio/animals/dog.ogg', icon: '🐶', volumeBoost: 1 }, { name: 'mèo', audio: '/audio/animals/cat.ogg', icon: '🐱', volumeBoost: 1 },
+  { name: 'vịt', audio: '/audio/animals/duck.mp3', icon: '🦆', volumeBoost: 1 }, { name: 'bò', audio: '/audio/animals/cow.ogg', icon: '🐮', volumeBoost: 1 },
+  { name: 'voi', audio: '/audio/animals/elephant.ogg', icon: '🐘', volumeBoost: 1 }, { name: 'gà', audio: '/audio/animals/chicken.oga', icon: '🐔', volumeBoost: 1 },
+  { name: 'cừu', audio: '/audio/animals/sheep.ogg', icon: '🐑', volumeBoost: 1 }, { name: 'ếch', audio: '/audio/animals/frog.mp3', icon: '🐸', volumeBoost: 1.35 },
 ]
 
 function AnimalGame({ audio, onHome, onProgress }: { audio: AudioControls; onHome: () => void; onProgress: (n: number) => void }) {
@@ -314,18 +389,25 @@ function AnimalGame({ audio, onHome, onProgress }: { audio: AudioControls; onHom
     return [target, other[offset], other[(offset + 2) % other.length], other[(offset + 4) % other.length]].sort((a, b) => (a.name.charCodeAt(0) + round) % 5 - (b.name.charCodeAt(0) + round) % 5)
   }, [round, target])
 
-  const ask = useCallback(() => audio.speak(`${target.sound} Bé tìm xem tiếng của bạn nào nhé!`), [audio, target])
-  useEffect(() => { const id = window.setTimeout(ask, 450); return () => window.clearTimeout(id) }, [ask])
+  const ask = useCallback(async () => {
+    const heard = await audio.playAnimal(target.audio, target.volumeBoost)
+    if (heard) audio.speak('Bé tìm xem tiếng của bạn nào nhé!')
+  }, [audio, target.audio, target.volumeBoost])
+  useEffect(() => {
+    if (success) return
+    const id = window.setTimeout(ask, 450)
+    return () => window.clearTimeout(id)
+  }, [ask, success])
 
   const choose = (name: string) => {
-    audio.sfx('pop')
+    if (success) return
     if (name === target.name) {
       setSuccess(true)
-      audio.sfx('success')
-      audio.speak('Đúng rồi! Bé giỏi quá!')
+      const feedbackDuration = audio.correct()
       onProgress(round + 1)
-      window.setTimeout(() => { setSuccess(false); setWrong(null); setRound((r) => (r + 1) % 8) }, 1800)
+      window.setTimeout(() => { setSuccess(false); setWrong(null); setRound((r) => (r + 1) % 8) }, feedbackDuration)
     } else {
+      audio.sfx('pop')
       setWrong(name)
       audio.speak('Bạn này cũng đáng yêu quá. Bé nghe lại nhé!')
       window.setTimeout(() => setWrong(null), 650)
@@ -365,18 +447,22 @@ function ShapeGame({ audio, onHome, onProgress }: { audio: AudioControls; onHome
   const target = shapes[round % shapes.length]
   const bins = useMemo(() => [target, shapes[(round + 1) % 4], shapes[(round + 2) % 4]].sort((a, b) => (a.id.length + round) % 3 - (b.id.length + round) % 3), [round, target])
   const ask = useCallback(() => audio.speak(`Bé kéo ${shapeLabels[target.id]} vào chiếc hộp giống nó nhé!`), [audio, target.id])
-  useEffect(() => { const id = window.setTimeout(ask, 400); return () => window.clearTimeout(id) }, [ask])
+  useEffect(() => {
+    if (success) return
+    const id = window.setTimeout(ask, 400)
+    return () => window.clearTimeout(id)
+  }, [ask, success])
 
   const completeDrop = (clientX: number, clientY: number) => {
+    if (success) return
     const element = document.elementFromPoint(clientX, clientY) as HTMLElement | null
     const bin = element?.closest<HTMLElement>('[data-bin]')
     setDrag(null)
     if (bin?.dataset.bin === target.id) {
       setSuccess(true)
-      audio.sfx('ting')
-      audio.speak('Ting! Khéo tay quá!')
+      const feedbackDuration = audio.correct()
       onProgress(round + 1)
-      window.setTimeout(() => { setSuccess(false); setRound((r) => (r + 1) % 8) }, 1600)
+      window.setTimeout(() => { setSuccess(false); setRound((r) => (r + 1) % 8) }, feedbackDuration)
     } else {
       setWrong(true)
       audio.speak('Thử lại lần nữa nào!')
@@ -431,18 +517,22 @@ function ColorGame({ audio, onHome, onProgress }: { audio: AudioControls; onHome
   const item = colorRounds[round]
   const target = palette[item.color]
   const ask = useCallback(() => audio.speak(`Bé hãy chọn màu ${target.label} nhé!`), [audio, target.label])
-  useEffect(() => { const id = window.setTimeout(ask, 400); return () => window.clearTimeout(id) }, [ask])
+  useEffect(() => {
+    if (success) return
+    const id = window.setTimeout(ask, 400)
+    return () => window.clearTimeout(id)
+  }, [ask, success])
 
   const choose = (color: typeof palette[number]) => {
-    audio.sfx('pop')
+    if (success) return
     setPainted(color.hex)
     if (color.id === target.id) {
       setSuccess(true)
-      audio.sfx('success')
-      audio.speak('Đúng rồi! Bé giỏi quá!')
+      const feedbackDuration = audio.correct()
       onProgress(round + 1)
-      window.setTimeout(() => { setSuccess(false); setPainted(null); setRound((r) => (r + 1) % 8) }, 1700)
+      window.setTimeout(() => { setSuccess(false); setPainted(null); setRound((r) => (r + 1) % 8) }, feedbackDuration)
     } else {
+      audio.sfx('pop')
       setWrong(color.id)
       audio.speak('Ồ, màu này cũng đẹp. Bé thử lại nhé!')
       window.setTimeout(() => { setWrong(null); setPainted(null) }, 900)
@@ -489,7 +579,11 @@ function EmotionGame({ audio, onHome, onProgress }: { audio: AudioControls; onHo
   const selectedEyes = emotionData.find((e) => e.id === eyes)
   const selectedMouth = emotionData.find((e) => e.id === mouth)
   const ask = useCallback(() => audio.speak(`Bạn nhỏ đang rất ${target.label}. Bé ghép khuôn mặt cho bạn nào!`), [audio, target.label])
-  useEffect(() => { const id = window.setTimeout(ask, 400); return () => window.clearTimeout(id) }, [ask])
+  useEffect(() => {
+    if (success) return
+    const id = window.setTimeout(ask, 400)
+    return () => window.clearTimeout(id)
+  }, [ask, success])
 
   const choosePart = (part: 'eyes' | 'mouth', emotion: Emotion) => {
     if (success || wrong) return
@@ -501,10 +595,9 @@ function EmotionGame({ audio, onHome, onProgress }: { audio: AudioControls; onHo
     if (!nextEyes || !nextMouth) return
     if (nextEyes === target.id && nextMouth === target.id) {
       setSuccess(true)
-      audio.sfx('success')
-      audio.speak('Đúng rồi! Bé giỏi quá!')
+      const feedbackDuration = audio.correct()
       onProgress(round + 1)
-      window.setTimeout(() => { setSuccess(false); setEyes(null); setMouth(null); setRound((r) => (r + 1) % 8) }, 1900)
+      window.setTimeout(() => { setSuccess(false); setEyes(null); setMouth(null); setRound((r) => (r + 1) % 8) }, feedbackDuration)
       return
     }
     setWrong(true)

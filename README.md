@@ -35,4 +35,5 @@ Thư mục kết quả là `dist/`. Service worker chỉ hoạt động đầy �
 - Tiến độ và cài đặt được lưu trong `localStorage` của thiết bị.
 - Hiệu ứng, nhạc nền được tạo bằng Web Audio API, không gọi máy chủ bên ngoài.
 - Toàn bộ 27 câu hướng dẫn và phản hồi dùng tệp WAV giọng nữ miền Nam đóng gói cùng ứng dụng. Ứng dụng không dùng giọng đọc của trình duyệt và không gọi dịch vụ TTS khi trẻ chơi.
+- Trò chơi con vật dùng 8 bản thu tiếng động vật thật, được đóng gói để phát offline. Nguồn và giấy phép nằm trong `public/audio/animals/SOURCES.md`.
 - Xóa dữ liệu trình duyệt cũng sẽ xóa tiến độ của bé.
